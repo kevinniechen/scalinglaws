@@ -15,9 +15,9 @@ scenarios = [
     ("gpt-2", 4e10, 15e19), # double check
     ("gpt-3", 3e11, 3e23), # double check
     ("llama-400b", 15e12, 4e25),
-    ("$10B cluster, 150T", 15e13, 4e26),
-    ("$100B cluster, 150T", 15e13, 4e27),
-    ("$100T cluster, 15000T", 15e15, 4e31),
+    ("predict $10B gpus, 150T", 15e13, 4e26),
+    ("predict $100B gpus, 150T", 15e13, 4e27),
+    ("predict $100T gpus, 15P", 15e15, 4e31),
 ]
 
 for name, tokens, flops in scenarios:
