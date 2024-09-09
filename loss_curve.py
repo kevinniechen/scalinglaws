@@ -28,10 +28,10 @@ new_labels_final = [
     "prediction $100T gpus, 15P"  # P=quadrillion for 15000T
 ]
 
-# Define color scheme: first three slightly increasing intensity of dark gray to black, second three slightly increasing intensity of red
-gray_to_black_colors = ['#A9A9A9', '#696969', '#000000']  # Dark gray to black
-red_gradient_colors = ['#CD5C5C', '#DC143C', '#8B0000']  # Light red to dark red
-final_colors = gray_to_black_colors + red_gradient_colors
+# Define color scheme
+blue_color = '#1f77b4'
+red_color = '#d62728'
+final_colors = [blue_color, blue_color, blue_color, red_color, red_color, red_color]
 
 # Create the token and flops range
 tokens = np.logspace(np.log10(4e9), 18, 100)
@@ -43,7 +43,7 @@ loss_values = upstream_loss(tokens_grid, flops_grid)
 loss_values_masked = np.where(loss_values <= 3, loss_values, np.nan)
 min_loss_cutoff = np.nanmin(loss_values_masked)
 
-# Prepare figure and axis again for the plot with X's and adjusted colors
+# Prepare figure and axis again for the plot with X's, adjusted colors, and a legend
 fig = plt.figure(figsize=(12, 10))
 ax = fig.add_subplot(111, projection='3d')
 
@@ -52,7 +52,7 @@ surf = ax.plot_surface(
     np.log10(tokens_grid), np.log10(flops_grid), loss_values_masked, cmap='viridis', alpha=0.3
 )
 
-# Plot explicit data points with X's and the final color scheme
+# Plot explicit data points with X's and the final color scheme, adding labels for the legend
 for (label, token, flop), new_label, color in zip(data_points, new_labels_final, final_colors):
     loss = upstream_loss(token, flop)
     if loss <= 3:
@@ -73,7 +73,10 @@ ax.view_init(elev=30, azim=120)
 ax.set_xlim(np.log10(4e9), 18)
 ax.set_ylim(np.log10(15e18), 36)
 
-# Set title without adding a legend
+# Add a legend to the plot
+ax.legend(loc='upper left', fontsize=10)
+
+# Set title
 ax.set_title('Loss against tokens and flops, with known cluster buildouts')
 
 plt.show()
