@@ -1,37 +1,29 @@
 import math
 
-def upstream_loss(tokens: float, flops: float) -> float:
-    """Compute upstream loss (Hoffmann et al., 2022: arxiv.org/abs/2203.15556)"""
-    N = flops / (6 * tokens)
-    return 1.69 + 406.4 / (N**0.34) + 410.7 / (tokens**0.28)
+def upstream_loss(D: float, C: float, E: float = 1.84, alpha: float = 212, beta: float = 367, eta: float = 0.136) -> float:
+    """Compute upstream loss (Gadre et al., 2024: arxiv.org/pdf/2403.08540)"""
+    # N = C / (6 * D)
+    # M = D / N
+    M = (6*D**2)/C
+    return E + (alpha * (M**eta) + beta * (M**-eta)) * C**-eta
 
-def downstream_error(loss: float) -> float:
+def downstream_error(loss: float, epsilon: float = 0.857, k: float = 2.21, gamma: float = 0.715) -> float:
     """Compute downstream error (Gadre et al., 2024: arxiv.org/abs/2403.08540v2)"""
-    return 0.857 - 2.21 * math.exp(-0.715 * loss)
+    return epsilon - k * math.exp(-gamma * loss)
 
 
-# define scenarios
+# define scenarios (names, D, C)
 scenarios = [
-    ("gpt-2", 4e10, 15e19), # double check
-    ("gpt-3", 3e11, 3e23), # double check
-    ("llama-400b", 15e12, 4e25),
-    ("predict $10B gpus, 150T", 15e13, 4e26),
-    ("predict $100B gpus, 150T", 15e13, 4e27),
-    ("predict $100T gpus, 15P", 15e15, 4e31),
+    ("GPT-2", 4e10, 1e20),
+    ("GPT-3", 3e11, 1e23),
+    ("LLaMA-400B", 1.4e12, 3e24),
+    ("GPT-4", 1e13, 6e25),
+    ("[predict] $10B (1M GPUs), 150T tokens", 1.5e14, 6e26),
+    ("[predict] $100B (10M GPUs), 150T tokens", 1.5e14, 6e27),
+    ("[predict] $1T (100M GPUs), 150T tokens", 1.5e14, 6e28),
 ]
 
-for name, tokens, flops in scenarios:
-    loss = upstream_loss(tokens,flops)
+for name, D, C in scenarios:
+    loss = upstream_loss(D, C)
     error = downstream_error(loss)
-    tuple = (name, tokens, flops, loss, error)
-    print("{:<25} {:.2e} {:.2e} {:.4f} {:.4f}".format(*tuple))
-
-
-# results
-#
-# gpt-2                     4.00e+10 1.50e+20 2.5468 0.4993
-# gpt-3                     3.00e+11 3.00e+23 2.0033 0.3294
-# llama-400b                1.50e+13 4.00e+25 1.8185 0.2549
-# $10B cluster, 150T        1.50e+14 4.00e+26 1.7786 0.2374
-# $100B cluster, 150T       1.50e+14 4.00e+27 1.7544 0.2266
-# $100T cluster, 15000T     1.50e+16 4.00e+31 1.7064 0.2046
+    print(f"{name:<25} {D:.2e} {C:.2e} {loss:.4f} {error:.4f}")
