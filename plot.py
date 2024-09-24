@@ -12,13 +12,14 @@ red_color = '#d62728'
 tokens_scenarios = [scenario[1] for scenario in scenarios]
 flops_scenarios = [scenario[2] for scenario in scenarios]
 
-# Determine the exponent range based on scenarios
-min_token_exp = math.floor(np.log10(min(tokens_scenarios)))
-max_token_exp = math.ceil(np.log10(max(tokens_scenarios)))
-min_flop_exp = math.floor(np.log10(min(flops_scenarios)))
-max_flop_exp = math.ceil(np.log10(max(flops_scenarios)))
+# Determine the exponent range based on scenarios and extend the range
+buffer = 1  # Define how much to extend the range
+min_token_exp = math.floor(np.log10(min(tokens_scenarios))) - buffer
+max_token_exp = math.ceil(np.log10(max(tokens_scenarios))) + buffer
+min_flop_exp = math.floor(np.log10(min(flops_scenarios))) - buffer
+max_flop_exp = math.ceil(np.log10(max(flops_scenarios))) + buffer
 
-# Create the token and flops range ensuring coverage of all scenario points
+# Create the token and flops range ensuring coverage of all scenario points plus the buffer
 tokens = np.logspace(min_token_exp, max_token_exp, 100)
 flops = np.logspace(min_flop_exp, max_flop_exp, 100)
 tokens_grid, flops_grid = np.meshgrid(tokens, flops)
