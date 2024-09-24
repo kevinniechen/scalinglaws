@@ -2,16 +2,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import math
-from main import upstream_loss, downstream_error , scenarios
+from main import upstream_loss, downstream_error, scenarios
 
 # Define color scheme
 blue_color = '#1f77b4'
 red_color = '#d62728'
-final_colors = [blue_color, blue_color, blue_color, red_color, red_color, red_color]
 
-# Create the token and flops range
-tokens = np.logspace(15, 9, 100)
-flops = np.logspace(29, 19, 100)
+# Extract token (C) and flop (D) values from scenarios
+tokens_scenarios = [scenario[1] for scenario in scenarios]
+flops_scenarios = [scenario[2] for scenario in scenarios]
+
+# Determine the exponent range based on scenarios
+min_token_exp = math.floor(np.log10(min(tokens_scenarios)))
+max_token_exp = math.ceil(np.log10(max(tokens_scenarios)))
+min_flop_exp = math.floor(np.log10(min(flops_scenarios)))
+max_flop_exp = math.ceil(np.log10(max(flops_scenarios)))
+
+# Create the token and flops range ensuring coverage of all scenario points
+tokens = np.logspace(min_token_exp, max_token_exp, 100)
+flops = np.logspace(min_flop_exp, max_flop_exp, 100)
 tokens_grid, flops_grid = np.meshgrid(tokens, flops)
 
 # Compute upstream loss values
@@ -35,45 +44,55 @@ surf1 = ax1.plot_surface(
 )
 
 # Plot explicit data points for upstream loss
-for (label, token, flop), color in zip(scenarios, final_colors):
-    loss = upstream_loss(token, flop)
+colors = [blue_color, blue_color, blue_color, blue_color, red_color, red_color, red_color]
+for (label, C, D), color in zip(scenarios, colors):
+    loss = upstream_loss(C, D)
     if loss <= 3:
-        ax1.scatter(np.log10(token), np.log10(flop), loss, c=color, s=80, label=label, marker='x')
-        ax1.plot([np.log10(token), np.log10(token)], [np.log10(flop), np.log10(flop)], [np.nanmin(loss_values_masked), loss],
+        ax1.scatter(np.log10(C), np.log10(D), loss, c=color, s=80, label=label, marker='x')
+        ax1.plot([np.log10(C), np.log10(C)], [np.log10(D), np.log10(D)], [np.nanmin(loss_values_masked), loss],
                  color=color, linestyle='--', linewidth=1)
         # Significantly shift the label to the upper left of the data point
-        ax1.text(np.log10(token), np.log10(flop), loss + 0.07, f'{loss:.2f}', fontsize=8, color=color)
+        ax1.text(np.log10(C), np.log10(D), loss + 0.07, f'{loss:.2f}', fontsize=8, color=color)
 
-ax1.set_xlabel('Log10 Tokens')
-ax1.set_ylabel('Log10 Flops')
+ax1.set_xlabel('Log10 Tokens (C)')
+ax1.set_ylabel('Log10 Flops (D)')
 ax1.set_zlabel('Upstream Loss')
 ax1.set_title('Upstream Loss')
-ax1.legend(loc='upper left', fontsize=10)
 ax1.view_init(elev=15, azim=45)  # Adjusted viewing angle for better data point visibility
 ax1.invert_xaxis()  # Invert x-axis to reverse token scale
 
-# Plot for downstream error cropped to 0.55 and below
+# Plot for downstream error cropped to 0.6 and below
 surf2 = ax2.plot_surface(
     np.log10(tokens_grid), np.log10(flops_grid), downstream_error_values_cropped, cmap='plasma', alpha=0.3
 )
 
 # Plot explicit data points for downstream error
-for (label, token, flop), color in zip(scenarios, final_colors):
-    loss = upstream_loss(token, flop)
+for (label, C, D), color in zip(scenarios, colors):
+    loss = upstream_loss(C, D)
     error = downstream_error(loss)
-    if error <= 0.6:  # Adjusted limit to show only errors below 0.55
-        ax2.scatter(np.log10(token), np.log10(flop), error, c=color, s=80, label=label, marker='x')
-        ax2.plot([np.log10(token), np.log10(token)], [np.log10(flop), np.log10(flop)], [np.nanmin(downstream_error_values_cropped), error],
+    if error <= 0.6:  # Adjusted limit to show only errors below 0.6
+        ax2.scatter(np.log10(C), np.log10(D), error, c=color, s=80, label=label, marker='x')
+        ax2.plot([np.log10(C), np.log10(C)], [np.log10(D), np.log10(D)], [np.nanmin(downstream_error_values_cropped), error],
                  color=color, linestyle='--', linewidth=1)
         # Significantly shift the label to the upper left of the data point
-        ax2.text(np.log10(token), np.log10(flop), error + .015, f'{error:.2f}', fontsize=8, color=color)
+        ax2.text(np.log10(C), np.log10(D), error + 0.015, f'{error:.2f}', fontsize=8, color=color)
 
-ax2.set_xlabel('Log10 Tokens')
-ax2.set_ylabel('Log10 Flops')
+ax2.set_xlabel('Log10 Tokens (C)')
+ax2.set_ylabel('Log10 Flops (D)')
 ax2.set_zlabel('Downstream Error')
 ax2.set_title('Downstream Error')
-ax2.legend(loc='upper left', fontsize=10)
 ax2.view_init(elev=15, azim=45)  # Adjusted viewing angle for better data point visibility
 ax2.invert_xaxis()  # Invert x-axis to reverse token scale
 
+# Create a single legend for the entire figure, positioned lower to avoid overlap
+handles, labels = ax1.get_legend_handles_labels()
+fig.legend(handles, labels, loc='upper right', fontsize=10, title='Scenarios')
+
+# Adjust layout to make room for the legend and ensure padding
+plt.tight_layout(rect=[0, 0, 0.9, 1])
+
+# Add spacing between the two plots
+plt.subplots_adjust(wspace=0.1)
+
 plt.show()
+
