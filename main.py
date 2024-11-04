@@ -70,7 +70,7 @@ scenarios = [
     ("GPT-2", 1e21, 2.1e10),
     ("GPT-3", 3.14e23, 3e11),
     ("GPT-4", 2e25, 1.3e13),
-    #    ("LLaMA-400B", 4e25, 1.5e13),
+    # ("LLaMA-400B", 4e25, 1.5e13),
     ("GPT-5P (1M or $10B GPUs)", 8e26, 1.5e13),
     ("GPT-6P (10M or $100B GPUs)", 8e27, 1.5e14),
     ("GPT-7P (100M or $1T GPUs)", 8e28, 1.5e15),
