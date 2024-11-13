@@ -1,7 +1,11 @@
+import os
 import pandas as pd
 
+# Get the base directory (gadre folder)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # default path to metadata about the evals
-EVAL_METADATA = pd.read_csv("exp_data/eval_metadata.csv")
+EVAL_METADATA = pd.read_csv(os.path.join(BASE_DIR, "exp_data/eval_metadata.csv"))
 
 # 46 downstream evals and their citations used in our paper
 FRIENDLY_CITATIONS = {
@@ -165,4 +169,4 @@ DATASET_SHAPES = {
 }
 
 HF_MODEL_REPO = "mlfoundations/scaling"
-MODEL_JSON_ROOT = "exp_data/models"
+MODEL_JSON_ROOT = os.path.join(BASE_DIR, "exp_data/models")
