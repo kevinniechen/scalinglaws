@@ -86,22 +86,10 @@ def try_fit_function(fit_func, x, y, param_ranges, maxfev=10000):
     return best_params, min_residual
 
 def fit_loss_scaling(N, M, loss):
-    """Fit loss scaling with both sigmoid and power law models"""
-    def sigmoid_scaling(x, alpha, beta, b, E):
-        N, M = x
-        return (alpha / (1 + np.exp(-b * N))) + (beta / (1 + np.exp(-b * M * N))) + E
-        
+    """Fit loss scaling with power law model only"""
     def power_scaling(x, alpha, beta, b, E):
         N, M = x
         return alpha * np.power(N, b) + beta * np.power(M * N, b) + E
-    
-    # Try both sigmoid and power law fits
-    sigmoid_ranges = [
-        [-1e4, -1e3, -1e2],  # alpha
-        [1e2, 1e3, 1e4],     # beta
-        [1e-4, 1e-3, 1e-2],  # b
-        [0.0, 1e2, 1e3]      # E
-    ]
     
     power_ranges = [
         [1e2, 1e3, 1e4],     # alpha
@@ -110,33 +98,43 @@ def fit_loss_scaling(N, M, loss):
         [0.0, 1e2, 1e3]      # E
     ]
     
-    sigmoid_params, sigmoid_residual = try_fit_function(
-        sigmoid_scaling, (N, M), loss, sigmoid_ranges
-    )
-    
     power_params, power_residual = try_fit_function(
         power_scaling, (N, M), loss, power_ranges
     )
     
-    # Return the better fit
-    if sigmoid_residual < power_residual:
-        return sigmoid_params, 'sigmoid'
-    else:
-        return power_params, 'power'
+    return power_params
 
 def fit_error_scaling(loss, error):
-    """Fit error scaling with exponential decay"""
-    def error_scaling(L, k, gamma, epsilon):
+    """Fit error scaling with sigmoid and exponential decay models"""
+    def sigmoid_scaling(L, k, b, c, d):
+        return d - k / (1 + np.exp(-b * (L - c)))
+        
+    def exp_scaling(L, k, gamma, epsilon):
         return epsilon - k * np.exp(-gamma * L)
     
-    param_ranges = [
-        [1.0, 2.0, 3.0],     # k (amplitude)
+    # Try both sigmoid and exponential fits
+    sigmoid_ranges = [
+        [0.1, 0.2, 0.3],     # k (amplitude)
+        [1.0, 2.0, 3.0],     # b (steepness)
+        [2.0, 3.0, 4.0],     # c (midpoint)
+        [0.7, 0.8, 0.9]      # d (max value)
+    ]
+    
+    exp_ranges = [
+        [0.1, 0.2, 0.3],     # k (amplitude)
         [0.5, 1.0, 1.5],     # gamma (decay rate)
         [0.7, 0.8, 0.9]      # epsilon (asymptotic error)
     ]
     
-    params, _ = try_fit_function(error_scaling, loss, error, param_ranges)
-    return params
+    sigmoid_params, sigmoid_residual = try_fit_function(
+        sigmoid_scaling, loss, error, sigmoid_ranges
+    )
+    
+    exp_params, exp_residual = try_fit_function(
+        exp_scaling, loss, error, exp_ranges
+    )
+    
+    return sigmoid_params, exp_params
 
 def fit_scaling_laws(dataset, val_dataset, downstream, model_dir, eval_dir, cc_mults):
     """Fit scaling laws for a given dataset configuration"""
@@ -163,18 +161,23 @@ def fit_scaling_laws(dataset, val_dataset, downstream, model_dir, eval_dir, cc_m
         error = df[f'err_{downstream}'].values
         
         # Fit both scaling laws
-        loss_params, loss_type = fit_loss_scaling(N, M, loss)
-        error_params = fit_error_scaling(loss, error)
+        loss_params = fit_loss_scaling(N, M, loss)
+        sigmoid_params, exp_params = fit_error_scaling(loss, error)
         
-        return loss_params, error_params, loss_type
+        print(f"\nScaling laws for {dataset} -> {downstream}:")
+        print(f"Loss scaling: {loss_params}")
+        print(f"Error scaling (sigmoid): {sigmoid_params}")
+        print(f"Error scaling (exponential): {exp_params}")
+        
+        return loss_params, sigmoid_params, exp_params
     except Exception as e:
         print(f"Error fitting scaling laws for {dataset} -> {downstream}: {str(e)}")
         return None, None, None
 
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_dir = os.path.join(base_dir, "exp_data/models")
-    eval_dir = os.path.join(base_dir, "exp_data/evals")
+    model_dir = os.path.join(base_dir, "gadre/exp_data/models")
+    eval_dir = os.path.join(base_dir, "gadre/exp_data/evals")
     
     datasets = ["c4_original", "rpj", "rw_original"]
     cc_mults = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
@@ -182,14 +185,11 @@ def main():
     
     for dataset in datasets:
         for downstream in ["avg", "avg_subset"]:
-            loss_params, error_params, loss_type = fit_scaling_laws(
+            # Just let fit_scaling_laws handle the printing
+            fit_scaling_laws(
                 dataset, val_dataset, downstream, 
                 model_dir, eval_dir, cc_mults
             )
-            if loss_params is not None and error_params is not None:
-                print(f"\nScaling laws for {dataset} -> {downstream}:")
-                print(f"Loss scaling ({loss_type}): {loss_params}")
-                print(f"Error scaling: {error_params}")
 
 if __name__ == "__main__":
     main()
