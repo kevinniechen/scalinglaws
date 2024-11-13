@@ -174,7 +174,7 @@ def fit_ds(train_dataset, val_dataset, downstream, model_dir, eval_dir, Ms, add_
             "shapes": shapes_irr.copy(),
         }
 
-    popt_ours = curve_fit_powlaw_ours(np.array([ns_irr, ms_irr]), np.array(ys_irr).astype(float))
+    popt_ours = curve_fit_sigmoid_ours(np.array([ns_irr, ms_irr]), np.array(ys_irr).astype(float))
 
     if add_1b:
         # add 1b for this
