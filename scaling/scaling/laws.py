@@ -125,5 +125,4 @@ def curve_fit_decay_ours(xdata, ydata):
         ydata,
         maxfev=10000,
     )
-
     return popt

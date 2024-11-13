@@ -1,208 +1,190 @@
 import os
 import numpy as np
 from scipy.optimize import curve_fit
+import pandas as pd
+from pathlib import Path
+import json
 import pickle
 import matplotlib.pyplot as plt
-import math
-from typing import List, Tuple, Optional
 
-def load_scaling_params():
-    """Load the original fitted parameters from scaling_law_dict.pkl"""
-    import os
-    pickle_path = os.path.join(os.path.dirname(__file__), 'gadre', 'scaling_law_dict.pkl')
+# Subset of tasks for avg_subset metric
+SUBSET_TASKS = [
+    "bigbench_operators", "pubmed_qa_labeled", "hellaswag_zeroshot",
+    "boolq", "arc_easy", "coqa", "bigbench_dyck_languages",
+    "lambada_openai", "bigbench_novel_concepts", "winograd",
+    "bigbench_cs_algorithms", "commonsense_qa", "bigbench_qa_wikidata",
+    "hellaswag", "copa", "squad", "piqa"
+]
+
+def load_model_data(model_json_path, cc_mults, datasets, eval_dir=None):
+    """Load and parse a single model's data"""
+    with open(model_json_path) as f:
+        data = json.load(f)
+        
+    cc_mult = data["hyperparameters"]["chinchilla_multiplier"]
+    dataset_name = data["dataset_name"]
+    
+    if cc_mult not in cc_mults or dataset_name not in datasets:
+        return None
+        
+    model = {
+        "cc_mult": cc_mult,
+        "dataset_name": dataset_name,
+        "name": data["name"],
+        "model_name": data["hyperparameters"]["model"].split("/")[-1].split(".")[0],
+        "N": data["hyperparameters"]["params"],
+        "D": data["hyperparameters"]["tokens"],
+        "tok_mult": cc_mult * 20
+    }
+    
+    # Add loss metrics
+    for result in data["results"]:
+        suffix = result["val_data"][0].split("/")[-2]
+        if "de-en" in suffix:
+            suffix = result["val_data"][0].split("/")[-1].split(".")[0]
+        model[f"loss_{suffix}"] = result["loss"]
+    
+    # Add evaluation metrics if available
+    if eval_dir:
+        eval_path = f"{eval_dir}/evaluation_{Path(model_json_path).stem}_heavy.json"
+        if os.path.exists(eval_path):
+            with open(eval_path) as f:
+                eval_data = json.load(f)
+                metrics = eval_data["eval_metrics"]["icl"]
+                
+                # Store individual task errors
+                for k, v in metrics.items():
+                    model[f"err_{k}"] = 1.0 - v
+                
+                # Calculate averages
+                model["err_avg"] = np.mean([1.0 - v for v in metrics.values()])
+                subset_metrics = [1.0 - metrics[k] for k in SUBSET_TASKS if k in metrics]
+                if subset_metrics:
+                    model["err_avg_subset"] = np.mean(subset_metrics)
+                
+    return model
+
+def load_scaling_laws():
+    """Load pre-fitted scaling law parameters"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    pickle_path = os.path.join(base_dir, "scaling/scaling_law_dict.pkl")
+    
     with open(pickle_path, 'rb') as f:
-        return pickle.load(f)
+        scaling_laws = pickle.load(f)
+        return scaling_laws
 
-def fit_error_scaling(loss: np.ndarray, error: np.ndarray):
-    """Fit error scaling with sigmoid and exponential decay models"""
-    def sigmoid_scaling(L, k, b, c, d):
-        # Clip to avoid overflow
-        x = np.clip(-b * (L - c), -100, 100)
-        return d - k / (1 + np.exp(x))
-        
-    def exp_scaling(L, k, gamma, epsilon):
-        # Clip to avoid overflow
-        x = np.clip(-gamma * L, -100, 100)
-        return epsilon - k * np.exp(x)
-    
-    # Try both sigmoid and exponential fits
+def exp_scaling(L, a, b, e):
+    """Exponential decay function for error scaling - matches decay_ours from laws.py"""
+    return e - a * np.exp(L) ** (-b)
+
+def fit_error_scaling(loss, error):
+    """Fit error scaling with exponential decay model - exact match to curve_fit_decay_ours"""
     try:
-        exp_params, _ = curve_fit(
-            exp_scaling, loss, error,
-            p0=[1.2, 1.0, 0.75],  # Initial guesses closer to their values
-            bounds=([0, 0, 0], [5, 5, 1])  # Tighter bounds based on expected values
+        # Match laws.py exactly - no initial guesses, no grid search
+        popt, _ = curve_fit(
+            exp_scaling,
+            loss,
+            error,
+            maxfev=10000
         )
-        print(f"Successfully fit exponential with parameters: k={exp_params[0]:.3f}, gamma={exp_params[1]:.3f}, epsilon={exp_params[2]:.3f}")
-    except Exception as e:
-        print(f"Failed to fit exponential: {e}")
-        exp_params = None
-        
-    try:
-        sigmoid_params, _ = curve_fit(
-            sigmoid_scaling, loss, error,
-            p0=[0.5, 1.0, 2.0, 0.8],  # Initial guesses for k, b, c, d
-            bounds=([0, 0, 0, 0], [5, 5, 5, 1])  # Tighter bounds
-        )
-        print(f"Successfully fit sigmoid with parameters: k={sigmoid_params[0]:.3f}, b={sigmoid_params[1]:.3f}, c={sigmoid_params[2]:.3f}, d={sigmoid_params[3]:.3f}")
-    except Exception as e:
-        print(f"Failed to fit sigmoid: {e}")
-        sigmoid_params = None
-    
-    return sigmoid_params, exp_params
+        return popt
 
-def plot_error_scaling(loss: np.ndarray, error: np.ndarray, exp_params: Tuple, sigmoid_params: Tuple, their_exp_params: Tuple, save_path: str):
-    """Plot error scaling fits against data"""
-    plt.figure(figsize=(10, 6))
-    
-    # Plot original data points
-    plt.scatter(loss, error, alpha=0.5, label='Data Points')
-    
-    # Generate points for smooth curves
-    loss_range = np.linspace(min(loss), max(loss), 100)
-    
-    # Plot their exponential fit
-    k, gamma, epsilon = their_exp_params
-    their_exp_errors = epsilon - k * np.exp(-gamma * loss_range)
-    plt.plot(loss_range, their_exp_errors, 'b-', label=f'Their Exponential (k={k:.3f}, γ={gamma:.3f}, ε={epsilon:.3f})')
-    
-    # Plot our exponential fit
-    if exp_params is not None:
-        k, gamma, epsilon = exp_params
-        exp_errors = epsilon - k * np.exp(-gamma * loss_range)
-        plt.plot(loss_range, exp_errors, 'r-', label=f'Our Exponential (k={k:.3f}, γ={gamma:.3f}, ε={epsilon:.3f})')
-    
-    # Plot our sigmoid fit
-    if sigmoid_params is not None:
-        k, b, c, d = sigmoid_params
-        sigmoid_errors = d - k / (1 + np.exp(-b * (loss_range - c)))
-        plt.plot(loss_range, sigmoid_errors, 'g-', label=f'Our Sigmoid (k={k:.3f}, b={b:.3f}, c={c:.3f}, d={d:.3f})')
-    
-    plt.xlabel('Upstream Loss')
-    plt.ylabel('Downstream Error')
-    plt.grid(True)
-    plt.legend()
-    plt.title('Error Scaling: Comparing Different Fits')
-    
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
+    except Exception as e:
+        print(f"Error fitting exponential: {str(e)}")
+        return None
 
-def plot_scenario_analysis(scenarios: List[Tuple[str, float, float]], 
-                         loss_params: Tuple,
-                         exp_params: Tuple,
-                         sigmoid_params: Tuple,
-                         their_exp_params: Tuple,
-                         save_path: str = "scenario_analysis.png"):
-    """Plot scenario analysis comparing different error scaling approaches"""
+def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir, cc_mults, scaling_laws):
+    """Create subplots for each dataset in a single figure"""
+    # Create a figure with subplots (1 row, 3 columns)
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
     
-    def upstream_loss(C: float, D: float) -> float:
-        """Calculate upstream loss given compute C and tokens D"""
-        N = C / (6 * D)  # Parameters
-        M = (6 * D**2) / C  # Tokens per parameter
+    for idx, dataset in enumerate(datasets):
+        # Load models for this dataset
+        models = []
+        for filename in os.listdir(model_dir):
+            if filename.endswith('.json'):
+                model = load_model_data(f"{model_dir}/{filename}", cc_mults, [dataset], eval_dir)
+                if model and f"err_{downstream}" in model:
+                    models.append(model)
         
-        alpha, beta, b, E = loss_params
-        return alpha * N**b + beta * (M * N)**b + E
+        if not models:
+            print(f"No valid models found for {dataset} -> {downstream}")
+            continue
+        
+        df = pd.DataFrame(models)
+        ax = axes[idx]  # Get the appropriate subplot
+        
+        try:
+            scaling_key = f"train={dataset}-loss={val_dataset}-downstream={downstream}"
+            scaling_data = scaling_laws[scaling_key]
+            error_params = scaling_data['error_scaling']
+            
+            error = df[f'err_{downstream}'].values
+            loss = df[f'loss_{val_dataset}'].values
+            
+            # Fit our custom parameters
+            exp_params = fit_error_scaling(loss, error)
+            
+            # Plot raw data points
+            ax.scatter(loss, error, color='blue', label='Data points', alpha=0.6, marker='o')
+            
+            # Generate smooth curve for both fits
+            loss_smooth = np.linspace(min(loss), max(loss), 100)
+            
+            # Plot pre-fitted curve
+            y_prefitted = exp_scaling(loss_smooth, *error_params)
+            ax.plot(loss_smooth, y_prefitted, 'r-', label='Pre-fitted', alpha=0.8)
+            
+            # Plot our custom fit
+            if exp_params is not None:
+                y_custom = exp_scaling(loss_smooth, *exp_params)
+                ax.plot(loss_smooth, y_custom, 'g--', label='Custom fit', alpha=0.8)
+            
+            # Configure subplot
+            ax.set_xlabel('Loss')
+            ax.set_ylabel('Error')
+            ax.set_title(f'{dataset}')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Print parameters
+            error_params_fmt = [f"{x:.4f}" for x in error_params]
+            exp_params_fmt = [f"{x:.4f}" for x in exp_params] if exp_params is not None else ["None"]
+            
+            print(f"\nScaling laws for {dataset} ({val_dataset} validation, {downstream} downstream):")
+            print(f"Pre-fitted error exponential fit (a, b, e):               {', '.join(error_params_fmt)}")
+            print(f"Custom error exponential fit (a, b, e):        {', '.join(exp_params_fmt)}")
+            
+        except Exception as e:
+            print(f"Error analyzing scaling laws for {dataset} -> {downstream}: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
-    def downstream_error_exp(loss: float, params: Tuple) -> float:
-        k, gamma, epsilon = params
-        return epsilon - k * math.exp(-gamma * loss)
+    # Add overall title
+    fig.suptitle(f'Error Scaling Comparison (downstream={downstream})', y=1.05)
     
-    def downstream_error_sigmoid(loss: float) -> float:
-        k, b, c, d = sigmoid_params
-        return d - k / (1 + np.exp(-b * (loss - c)))
-    
-    # Calculate losses and errors for each scenario
-    names = [s[0] for s in scenarios]
-    losses = [upstream_loss(s[1], s[2]) for s in scenarios]
-    their_exp_errors = [downstream_error_exp(l, their_exp_params) for l in losses]
-    our_exp_errors = [downstream_error_exp(l, exp_params) for l in losses]
-    sigmoid_errors = [downstream_error_sigmoid(l) for l in losses]
-    
-    # Create plot
-    plt.figure(figsize=(15, 6))
-    x = range(len(scenarios))
-    width = 0.25
-    
-    plt.bar([i - width for i in x], their_exp_errors, width, label='Their Exponential', color='blue', alpha=0.6)
-    plt.bar([i for i in x], our_exp_errors, width, label='Our Exponential', color='red', alpha=0.6)
-    plt.bar([i + width for i in x], sigmoid_errors, width, label='Our Sigmoid', color='green', alpha=0.6)
-    
-    plt.xlabel('Model')
-    plt.ylabel('Predicted Error Rate')
-    plt.title('Error Predictions: Comparing Different Scaling Laws')
-    plt.xticks(x, names, rotation=45)
-    plt.legend()
-    plt.grid(True)
-    
+    # Adjust layout to prevent overlap
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    # Save combined plot
+    plt.savefig(f'scaling_comparison_combined_{downstream}.png', bbox_inches='tight')
     plt.close()
 
 def main():
-    # 1. Load existing parameters from pickle
-    scaling_dict = load_scaling_params()
-    key = "train=c4_original-loss=c4_val-downstream=avg"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    model_dir = os.path.join(base_dir, "scaling/exp_data/models")
+    eval_dir = os.path.join(base_dir, "scaling/exp_data/evals")
     
-    # Get their fitted parameters
-    loss_params = scaling_dict[key]["loss_scaling"]
-    their_error_params = scaling_dict[key]["error_scaling"]
+    scaling_laws = load_scaling_laws()
+    datasets = ["c4_original", "rpj", "rw_original"]
+    cc_mults = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
+    val_dataset = "c4_val"
     
-    print("\nOriginal fitted parameters:")
-    print(f"Loss scaling: alpha={loss_params[0]:.3f}, beta={loss_params[1]:.3f}, b={loss_params[2]:.3f}, E={loss_params[3]:.3f}")
-    print(f"Error scaling (exponential): k={their_error_params[0]:.3f}, gamma={their_error_params[1]:.3f}, epsilon={their_error_params[2]:.3f}")
-    
-    # Get the loss and error data points, ensuring they match
-    loss_data = scaling_dict[key]["loss_points"]
-    error_data = scaling_dict[key]["error_points"]
-    
-    # Use only the points where we have both loss and error data
-    n_points = min(len(loss_data["loss"]), len(error_data["error"]))
-    loss_points = np.array(loss_data["loss"][:n_points])
-    error_points = np.array(error_data["error"][:n_points])
-    
-    print(f"\nFitting to {len(loss_points)} data points...")
-    print(f"Loss range: [{min(loss_points):.3f}, {max(loss_points):.3f}]")
-    print(f"Error range: [{min(error_points):.3f}, {max(error_points):.3f}]")
-    
-    print("\nData points used for fitting:")
-    for i, (l, e) in enumerate(zip(loss_points, error_points)):
-        print(f"Point {i}: loss={l:.3f}, error={e:.3f}")
-    
-    # 2. Fit our own error scaling models
-    print("\nFitting our own error scaling models...")
-    sigmoid_params, exp_params = fit_error_scaling(loss_points, error_points)
-    
-    # Plot the fits
-    plot_error_scaling(
-        loss_points, 
-        error_points,
-        exp_params,
-        sigmoid_params,
-        their_error_params,
-        "error_scaling_fits.png"
-    )
-    
-    # 3. Run scenario analysis
-    scenarios = [
-        ("GPT-2", 1e21, 2.1e10),
-        ("GPT-3", 3.14e23, 3e11),
-        ("GPT-4", 2e25, 1.3e13),
-        ("GPT-5P", 8e26, 1.5e13),
-        ("GPT-6P", 8e27, 1.5e14),
-        ("GPT-7P", 8e28, 1.5e15),
-    ]
-    
-    if exp_params is not None:
-        # Plot scenario analysis
-        plot_scenario_analysis(
-            scenarios,
-            loss_params,
-            exp_params,
-            sigmoid_params,
-            their_error_params,
-            "scenario_comparison.png"
+    for downstream in ["avg", "avg_subset"]:
+        analyze_all_scalings(
+            datasets, val_dataset, downstream,
+            model_dir, eval_dir, cc_mults, scaling_laws
         )
-    else:
-        print("\nSkipping scenario analysis because error scaling fits failed.")
 
 if __name__ == "__main__":
     main()
