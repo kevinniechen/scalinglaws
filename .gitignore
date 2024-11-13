@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Editor files
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
+.python-version
+
+# Project specific
+analysis_plots.png
+notes.txt
+scratch.txt
+optimized_scenarios.txt
