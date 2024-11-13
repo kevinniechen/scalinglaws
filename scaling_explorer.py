@@ -93,9 +93,47 @@ def fit_error_scaling(loss, error):
         print(f"Error fitting exponential: {str(e)}")
         return None
 
+def sigmoid_scaling(L, a, b, c, d):
+    """Sigmoidal function for error scaling"""
+    return d + (a - d) / (1 + np.exp(-b * (L - c)))
+
+def fit_sigmoid_scaling(loss, error):
+    """Fit error scaling with sigmoid model"""
+    try:
+        # Initial parameter guesses for sigmoid
+        # a: upper asymptote (max error)
+        # b: steepness
+        # c: midpoint (around mean loss)
+        # d: lower asymptote (min error)
+        p0 = [
+            np.max(error),  # a: upper asymptote
+            1.0,           # b: steepness
+            np.mean(loss), # c: midpoint
+            np.min(error)  # d: lower asymptote
+        ]
+        
+        # Bounds to keep parameters in reasonable ranges
+        bounds = (
+            [0, 0, np.min(loss), 0],  # lower bounds
+            [2, 10, np.max(loss), 1]   # upper bounds
+        )
+        
+        popt, _ = curve_fit(
+            sigmoid_scaling,
+            loss,
+            error,
+            p0=p0,
+            bounds=bounds,
+            maxfev=10000
+        )
+        return popt
+    except Exception as e:
+        print(f"Error fitting sigmoid: {str(e)}")
+        return None
+
 def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir, cc_mults, scaling_laws):
-    """Create subplots for each dataset in a single figure"""
-    # Create a figure with subplots (1 row, 3 columns)
+    """Create subplots for each dataset with both sigmoid and exponential fits"""
+    # Create single figure with subplots
     fig, axes = plt.subplots(1, 3, figsize=(20, 6))
     
     for idx, dataset in enumerate(datasets):
@@ -124,36 +162,55 @@ def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir,
             
             # Fit our custom parameters
             exp_params = fit_error_scaling(loss, error)
+            sig_params = fit_sigmoid_scaling(loss, error)
             
-            # Plot raw data points
+            # Generate extended range for smooth curves to see full behavior
+            loss_min = min(loss)
+            loss_max = max(loss)
+            loss_range = loss_max - loss_min
+            
+            # Extend the range by 50% on both sides
+            loss_smooth = np.linspace(
+                loss_min - 0.5 * loss_range,
+                loss_max + 0.5 * loss_range,
+                200
+            )
+            
+            # Plot data points
             ax.scatter(loss, error, color='blue', label='Data points', alpha=0.6, marker='o')
             
-            # Generate smooth curve for both fits
-            loss_smooth = np.linspace(min(loss), max(loss), 100)
+            # Add vertical lines to show data range
+            ax.axvline(x=loss_min, color='gray', linestyle=':', alpha=0.3)
+            ax.axvline(x=loss_max, color='gray', linestyle=':', alpha=0.3)
             
-            # Plot pre-fitted curve
+            # Plot pre-fitted exponential curve
             y_prefitted = exp_scaling(loss_smooth, *error_params)
-            ax.plot(loss_smooth, y_prefitted, 'r-', label='Pre-fitted', alpha=0.8)
+            ax.plot(loss_smooth, y_prefitted, 'r-', label='Pre-fitted exp', alpha=0.8)
             
-            # Plot our custom fit
+            # Plot our custom exponential fit
             if exp_params is not None:
                 y_custom = exp_scaling(loss_smooth, *exp_params)
-                ax.plot(loss_smooth, y_custom, 'g--', label='Custom fit', alpha=0.8)
+                ax.plot(loss_smooth, y_custom, 'g--', label='Custom exp', alpha=0.8)
+            
+            # Plot our custom sigmoid fit
+            if sig_params is not None:
+                y_sigmoid = sigmoid_scaling(loss_smooth, *sig_params)
+                ax.plot(loss_smooth, y_sigmoid, 'm:', label='Sigmoid', alpha=0.8, linewidth=2)
             
             # Configure subplot
             ax.set_xlabel('Loss')
             ax.set_ylabel('Error')
-            ax.set_title(f'{dataset}')
+            ax.set_title(f'{dataset}\nData range shown in vertical lines')
             ax.legend()
             ax.grid(True, alpha=0.3)
             
-            # Print parameters
-            error_params_fmt = [f"{x:.4f}" for x in error_params]
-            exp_params_fmt = [f"{x:.4f}" for x in exp_params] if exp_params is not None else ["None"]
-            
-            print(f"\nScaling laws for {dataset} ({val_dataset} validation, {downstream} downstream):")
-            print(f"Pre-fitted error exponential fit (a, b, e):               {', '.join(error_params_fmt)}")
-            print(f"Custom error exponential fit (a, b, e):        {', '.join(exp_params_fmt)}")
+            # Print parameters and ranges
+            print(f"\nScaling laws for {dataset}:")
+            print(f"Loss range: [{loss_min:.4f}, {loss_max:.4f}]")
+            print(f"Error range: [{min(error):.4f}, {max(error):.4f}]")
+            print(f"Pre-fitted error exponential fit (a, b, e):               {', '.join([f'{x:.4f}' for x in error_params])}")
+            print(f"Custom error exponential fit (a, b, e):        {', '.join([f'{x:.4f}' for x in exp_params]) if exp_params is not None else 'None'}")
+            print(f"Custom error sigmoid fit (a, b, c, d):         {', '.join([f'{x:.4f}' for x in sig_params]) if sig_params is not None else 'None'}")
             
         except Exception as e:
             print(f"Error analyzing scaling laws for {dataset} -> {downstream}: {str(e)}")
@@ -163,11 +220,11 @@ def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir,
     # Add overall title
     fig.suptitle(f'Error Scaling Comparison (downstream={downstream})', y=1.05)
     
-    # Adjust layout to prevent overlap
+    # Adjust layout
     plt.tight_layout()
     
-    # Save combined plot
-    plt.savefig(f'scaling_comparison_combined_{downstream}.png', bbox_inches='tight')
+    # Save plot
+    plt.savefig(f'scaling_comparison_{downstream}.png', bbox_inches='tight')
     plt.close()
 
 def main():
