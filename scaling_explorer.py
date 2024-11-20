@@ -16,6 +16,13 @@ SUBSET_TASKS = [
     "hellaswag", "copa", "squad", "piqa"
 ]
 
+# Subset of tasks for avg_best_subset metric
+BEST_SUBSET_TASKS = [
+    "winograd", "copa", "piqa", "hellaswag", "hellaswag_zeroshot",
+    "arc_easy", "bigbench_qa_wikidata", "boolq", "winogrande",
+    "lambada_openai"
+]
+
 def load_model_data(model_json_path, cc_mults, datasets, eval_dir=None):
     """Load and parse a single model's data"""
     with open(model_json_path) as f:
@@ -61,6 +68,10 @@ def load_model_data(model_json_path, cc_mults, datasets, eval_dir=None):
                 subset_metrics = [1.0 - metrics[k] for k in SUBSET_TASKS if k in metrics]
                 if subset_metrics:
                     model["err_avg_subset"] = np.mean(subset_metrics)
+
+                best_subset_metrics = [1.0 - metrics[k] for k in BEST_SUBSET_TASKS if k in metrics]
+                if best_subset_metrics:
+                    model["err_avg_best_subset"] = np.mean(best_subset_metrics)
                 
     return model
 
@@ -188,21 +199,40 @@ def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir,
         log_ax = axes[1, idx]
         
         try:
-            scaling_key = f"train={dataset}-loss={val_dataset}-downstream={downstream}"
+            if downstream == "avg_best_subset":
+                scaling_key = f"train={dataset}-loss={val_dataset}-downstream=avg_subset"
+            else:
+                scaling_key = f"train={dataset}-loss={val_dataset}-downstream={downstream}"
             scaling_data = scaling_laws[scaling_key]
             error_params = scaling_data['error_scaling']
             loss_scaling = scaling_data['loss_scaling']
             irr_loss = loss_scaling[3] # also called E in the paper/code
             
+            # Print out tasks by error rate
+            errs = []
+            for k in df.keys():
+                if "err_" in k:
+                    errs.append((df[k].values.min(), k))
+            
+            sorted_errs = sorted(errs, key = lambda x: x[0])
+            print(sorted_errs)
+
+
+            # Calculate errors
             error = df[f'err_{downstream}'].values
+            accuracy = 1-error
             loss = df[f'loss_{val_dataset}'].values
             reducible_loss = loss - irr_loss
-            log_reducible_loss = np.log(reducible_loss)
+            log_reducible_loss = -np.log(reducible_loss)
+
+            indices = log_reducible_loss > -1
+            log_reducible_loss = log_reducible_loss[indices]
+            accuracy = accuracy[indices]
             
             # Fit our custom parameters
             exp_params = fit_error_scaling(loss, error)
             sig_params = fit_sigmoid_scaling(loss, error)
-            log_sig_params = fit_zero_to_one_sigmoid_scaling(log_reducible_loss, error)
+            log_sig_params = fit_zero_to_one_sigmoid_scaling(log_reducible_loss, accuracy)
             
             # Generate extended range for smooth curves to see full behavior
             loss_min = min(loss)
@@ -222,16 +252,16 @@ def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir,
 
             # Extend range more to the left to see trend for log loss
             log_loss_smooth = np.linspace(
-                log_loss_min - 2.0 * log_loss_range,
-                log_loss_max + 0.5 * log_loss_range,
+                log_loss_min - 0.5 * log_loss_range,
+                log_loss_max + 2 * log_loss_range,
                 200
             )
             
             # Plot data points
             ax.scatter(loss, error, color='blue', label='Data points', alpha=0.6, marker='o')
             log_ax.set_ylim([-0.1, 1.1])
-            log_ax.set_xlim([log_loss_min - 2.0 * log_loss_range, log_loss_max + 0.5 * log_loss_range])
-            log_ax.scatter(log_reducible_loss, error, color='blue', label='Data points', alpha=0.6, marker='o')
+            log_ax.set_xlim([log_loss_min - 0.5 * log_loss_range, log_loss_max + 2 * log_loss_range])
+            log_ax.scatter(log_reducible_loss, accuracy, color='blue', label='Data points', alpha=0.6, marker='o')
             
             # Add vertical lines to show data range
             ax.axvline(x=loss_min, color='gray', linestyle=':', alpha=0.3)
@@ -263,8 +293,8 @@ def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir,
             ax.legend()
             ax.grid(True, alpha=0.3)
 
-            log_ax.set_xlabel('Log Loss')
-            log_ax.set_ylabel('Error')
+            log_ax.set_xlabel('Negative Log Reducible Loss')
+            log_ax.set_ylabel('Accuracy')
             log_ax.legend()
             log_ax.grid(True, alpha=0.3)
             
@@ -302,7 +332,7 @@ def main():
     cc_mults = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
     val_dataset = "c4_val"
     
-    for downstream in ["avg", "avg_subset"]:
+    for downstream in ["avg", "avg_subset", "avg_best_subset"]:
         analyze_all_scalings(
             datasets, val_dataset, downstream,
             model_dir, eval_dir, cc_mults, scaling_laws
