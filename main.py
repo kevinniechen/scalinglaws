@@ -20,7 +20,7 @@ def downstream_error(
     loss: float, epsilon: float = 0.857, k: float = 2.21, gamma: float = 0.715
 ) -> float:
     """Compute downstream error fitted on RedPajama data (Gadre et al., 2024: arxiv.org/abs/2403.08540v2)"""
-    # return epsilon - k * math.exp(-gamma * loss)
+    return epsilon - k * math.exp(-gamma * loss)
 
 
 def gradient_descent_multiplicative(
