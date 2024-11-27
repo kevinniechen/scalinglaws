@@ -53,6 +53,11 @@ python scaling_explorer.py  # Generate scaling law visualizations
 - Pandas
 - SciPy
 
+## Contributors
+
+- Kevin Chen
+- Justin Rose
+
 ## References
 
 - Gadre et al. (2024). ["All Laws are Not Equal: Isolating Factors in Scaling Laws"](https://arxiv.org/abs/2403.08540)
