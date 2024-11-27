@@ -1,4 +1,4 @@
-# Scaling Laws Explorer
+# Scaling laws
 
 This repository contains tools and analysis for exploring language model scaling laws, particularly focusing on the relationships between compute, dataset size, and model performance as described in [Gadre et al., 2024](https://arxiv.org/abs/2403.08540).
 
@@ -29,22 +29,6 @@ git submodule update --init --recursive
 pip install -r requirements.txt
 ```
 
-## Features
-
-- Compute optimal dataset sizes for given compute budgets
-- Analyze upstream loss and downstream error relationships
-- Visualize scaling behavior across different model architectures
-- Compare performance across different training datasets (C4, RedPajama, RefinedWeb)
-
-## Usage
-
-To explore scaling relationships:
-
-```python
-python main.py  # Analyze compute/dataset relationships
-python scaling_explorer.py  # Generate scaling law visualizations
-```
-
 ## Requirements
 
 - Python 3.8+
@@ -54,8 +38,7 @@ python scaling_explorer.py  # Generate scaling law visualizations
 - SciPy
 
 ## Contributors
-
-- Kevin Chen
+- Kevin Niechen
 - Justin Rose
 
 ## References
