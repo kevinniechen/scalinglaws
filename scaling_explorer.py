@@ -16,13 +16,6 @@ SUBSET_TASKS = [
     "hellaswag", "copa", "squad", "piqa"
 ]
 
-# Subset of tasks for avg_best_subset metric
-BEST_SUBSET_TASKS = [
-    "winograd", "copa", "piqa", "hellaswag", "hellaswag_zeroshot",
-    "arc_easy", "bigbench_qa_wikidata", "boolq", "winogrande",
-    "lambada_openai"
-]
-
 def load_model_data(model_json_path, cc_mults, datasets, eval_dir=None):
     """Load and parse a single model's data"""
     with open(model_json_path) as f:
@@ -68,10 +61,6 @@ def load_model_data(model_json_path, cc_mults, datasets, eval_dir=None):
                 subset_metrics = [1.0 - metrics[k] for k in SUBSET_TASKS if k in metrics]
                 if subset_metrics:
                     model["err_avg_subset"] = np.mean(subset_metrics)
-
-                best_subset_metrics = [1.0 - metrics[k] for k in BEST_SUBSET_TASKS if k in metrics]
-                if best_subset_metrics:
-                    model["err_avg_best_subset"] = np.mean(best_subset_metrics)
                 
     return model
 
@@ -84,17 +73,19 @@ def load_scaling_laws():
         scaling_laws = pickle.load(f)
         return scaling_laws
 
-def exp_scaling(L, a, b, e):
-    """Exponential decay function for error scaling - matches decay_ours from laws.py"""
-    return e - a * np.exp(L) ** (-b)
+def exp_scaling(log_L, a, b, e):
+    """Exponential decay function for error scaling using log of irreducible loss"""
+    return e - a * np.exp(log_L) ** (-b)
 
 def fit_error_scaling(loss, error):
-    """Fit error scaling with exponential decay model - exact match to curve_fit_decay_ours"""
+    """Fit error scaling with exponential decay model using log of loss"""
     try:
-        # Match laws.py exactly - no initial guesses, no grid search
+        # Take log of loss values
+        log_loss = np.log(loss)
+        
         popt, _ = curve_fit(
             exp_scaling,
-            loss,
+            log_loss,
             error,
             maxfev=10000
         )
@@ -104,34 +95,32 @@ def fit_error_scaling(loss, error):
         print(f"Error fitting exponential: {str(e)}")
         return None
 
-def sigmoid_scaling(L, a, b, c, d):
-    """Sigmoidal function for error scaling"""
-    return d + (a - d) / (1 + np.exp(-b * (L - c)))
+def sigmoid_scaling(log_L, a, b, c, d):
+    """Sigmoidal function for error scaling using log of irreducible loss"""
+    return d + (a - d) / (1 + np.exp(b * (log_L - c)))
 
 def fit_sigmoid_scaling(loss, error):
-    """Fit error scaling with sigmoid model"""
+    """Fit error scaling with sigmoid model using log of loss"""
     try:
+        log_loss = np.log(loss)
+        
         # Initial parameter guesses for sigmoid
-        # a: upper asymptote (max error)
-        # b: steepness
-        # c: midpoint (around mean loss)
-        # d: lower asymptote (min error)
         p0 = [
-            np.max(error),  # a: upper asymptote
-            1.0,           # b: steepness
-            np.mean(loss), # c: midpoint
-            np.min(error)  # d: lower asymptote
+            np.max(error),    # a: upper asymptote at max error
+            3.0,              # b: moderate initial steepness
+            np.mean(log_loss),# c: midpoint at mean of log loss
+            np.min(error)     # d: lower asymptote at min error
         ]
         
-        # Bounds to keep parameters in reasonable ranges
+        # Much looser bounds to allow better fitting
         bounds = (
-            [0, 0, np.min(loss), 0],  # lower bounds
-            [2, 10, np.max(loss), 1]   # upper bounds
+            [0.0, 0.1, -np.inf, 0.0],     # lower bounds
+            [1.0, 100.0, np.inf, 1.0]      # upper bounds
         )
         
         popt, _ = curve_fit(
             sigmoid_scaling,
-            loss,
+            log_loss,
             error,
             p0=p0,
             bounds=bounds,
@@ -142,44 +131,39 @@ def fit_sigmoid_scaling(loss, error):
         print(f"Error fitting sigmoid: {str(e)}")
         return None
 
-def zero_to_one_sigmoid_scaling(L, b, c):
-    """Sigmoidal function for mapping log reducible loss to error"""
-    return 1 / (1 + np.exp(-b * (L - c)))
-
-def fit_zero_to_one_sigmoid_scaling(loss, error):
-    """Fit error scaling with sigmoid model"""
+def fit_raw_loss_curve(N, loss):
+    """Fit raw loss curve to find irreducible loss (asymptote)"""
+    def loss_scaling(N, alpha, beta, L_min):
+        # Basic power law with asymptote
+        return L_min + alpha * (N ** -beta)
+    
     try:
-        # Initial parameter guesses for sigmoid
-        # b: steepness
-        # c: midpoint (around mean loss)
-        p0 = [
-            1.0,           # b: steepness
-            np.mean(loss), # c: midpoint
-        ]
+        # Initial guesses
+        p0 = [1.0, 0.5, np.min(loss)]
         
-        # Bounds to keep parameters in reasonable ranges
+        # Bounds to ensure positive values and reasonable asymptote
         bounds = (
-            [-100, -10],  # lower bounds
-            [100, 10]   # upper bounds
+            [0, 0, 0],  # lower bounds
+            [np.inf, 2, np.min(loss) * 1.2]  # upper bounds
         )
         
         popt, _ = curve_fit(
-            zero_to_one_sigmoid_scaling,
+            loss_scaling,
+            N,
             loss,
-            error,
             p0=p0,
             bounds=bounds,
             maxfev=10000
         )
         return popt
     except Exception as e:
-        print(f"Error fitting zero to one sigmoid: {str(e)}")
+        print(f"Error fitting raw loss curve: {str(e)}")
         return None
 
 def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir, cc_mults, scaling_laws):
     """Create subplots for each dataset with both sigmoid and exponential fits"""
     # Create single figure with subplots
-    fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
     
     for idx, dataset in enumerate(datasets):
         # Load models for this dataset
@@ -195,117 +179,82 @@ def analyze_all_scalings(datasets, val_dataset, downstream, model_dir, eval_dir,
             continue
         
         df = pd.DataFrame(models)
-        ax = axes[0, idx]  # Get the appropriate subplot
-        log_ax = axes[1, idx]
+        ax = axes[idx]  # Get the appropriate subplot
         
         try:
-            if downstream == "avg_best_subset":
-                scaling_key = f"train={dataset}-loss={val_dataset}-downstream=avg_subset"
-            else:
-                scaling_key = f"train={dataset}-loss={val_dataset}-downstream={downstream}"
+            scaling_key = f"train={dataset}-loss={val_dataset}-downstream={downstream}"
             scaling_data = scaling_laws[scaling_key]
             error_params = scaling_data['error_scaling']
-            loss_scaling = scaling_data['loss_scaling']
-            irr_loss = loss_scaling[3] # also called E in the paper/code
             
-            # Print out tasks by error rate
-            errs = []
-            for k in df.keys():
-                if "err_" in k:
-                    errs.append((df[k].values.min(), k))
-            
-            sorted_errs = sorted(errs, key = lambda x: x[0])
-            print(sorted_errs)
-
-
-            # Calculate errors
             error = df[f'err_{downstream}'].values
-            accuracy = 1-error
-            loss = df[f'loss_{val_dataset}'].values
-            reducible_loss = loss - irr_loss
-            log_reducible_loss = -np.log(reducible_loss)
-
-            indices = log_reducible_loss > -1
-            log_reducible_loss = log_reducible_loss[indices]
-            accuracy = accuracy[indices]
+            raw_loss = df[f'loss_{val_dataset}'].values
             
-            # Fit our custom parameters
-            exp_params = fit_error_scaling(loss, error)
-            sig_params = fit_sigmoid_scaling(loss, error)
-            log_sig_params = fit_zero_to_one_sigmoid_scaling(log_reducible_loss, accuracy)
+            # Get irreducible loss from pre-fitted parameters
+            L_irr = error_params[2]  # The 'e' parameter from the pre-fitted curve
+            print(f"\nIrreducible loss for {dataset}: {L_irr:.4f}")
             
-            # Generate extended range for smooth curves to see full behavior
-            loss_min = min(loss)
-            loss_max = max(loss)
-            loss_range = loss_max - loss_min
-
-            log_loss_min = min(log_reducible_loss)
-            log_loss_max = max(log_reducible_loss)
-            log_loss_range = log_loss_max - log_loss_min
+            # Calculate reducible loss
+            L_red = raw_loss - L_irr
             
-            # Extend the range by 50% on both sides
-            loss_smooth = np.linspace(
-                loss_min - 0.5 * loss_range,
-                loss_max + 0.5 * loss_range,
-                200
-            )
-
-            # Extend range more to the left to see trend for log loss
-            log_loss_smooth = np.linspace(
-                log_loss_min - 0.5 * log_loss_range,
-                log_loss_max + 2 * log_loss_range,
+            # Calculate min and max values for plotting
+            L_red_min = np.min(L_red)
+            L_red_max = np.max(L_red)
+            
+            # Fit our custom parameters using log of reducible loss
+            exp_params = fit_error_scaling(L_red, error)
+            sig_params = fit_sigmoid_scaling(L_red, error)
+            
+            # Generate extended range for smooth curves
+            log_L_red_min = np.log(L_red_min)
+            log_L_red_max = np.log(L_red_max)
+            log_L_red_range = log_L_red_max - log_L_red_min
+            
+            # Extend the range by 50% on both sides in log space
+            log_L_red_smooth = np.linspace(
+                log_L_red_min - 0.5 * log_L_red_range,
+                log_L_red_max + 0.5 * log_L_red_range,
                 200
             )
             
-            # Plot data points
-            ax.scatter(loss, error, color='blue', label='Data points', alpha=0.6, marker='o')
-            log_ax.set_ylim([-0.1, 1.1])
-            log_ax.set_xlim([log_loss_min - 0.5 * log_loss_range, log_loss_max + 2 * log_loss_range])
-            log_ax.scatter(log_reducible_loss, accuracy, color='blue', label='Data points', alpha=0.6, marker='o')
+            # Convert back to normal space for plotting
+            L_red_smooth = np.exp(log_L_red_smooth)
+            loss_smooth = L_red_smooth + L_irr  # Add back irreducible loss for plotting
+            
+            # Plot data points using raw loss for x-axis
+            ax.scatter(raw_loss, error, color='blue', label='Data points', alpha=0.6, marker='o')
             
             # Add vertical lines to show data range
-            ax.axvline(x=loss_min, color='gray', linestyle=':', alpha=0.3)
-            ax.axvline(x=loss_max, color='gray', linestyle=':', alpha=0.3)
+            ax.axvline(x=L_red_min + L_irr, color='gray', linestyle=':', alpha=0.3)
+            ax.axvline(x=L_red_max + L_irr, color='gray', linestyle=':', alpha=0.3)
             
-            # Plot pre-fitted exponential curve
-            y_prefitted = exp_scaling(loss_smooth, *error_params)
+            # Plot pre-fitted exponential curve using original function
+            y_prefitted = error_params[2] - error_params[0] * np.exp(np.log(L_red_smooth)) ** (-error_params[1])
             ax.plot(loss_smooth, y_prefitted, 'r-', label='Pre-fitted exp', alpha=0.8)
             
             # Plot our custom exponential fit
             if exp_params is not None:
-                y_custom = exp_scaling(loss_smooth, *exp_params)
+                y_custom = exp_scaling(log_L_red_smooth, *exp_params)
                 ax.plot(loss_smooth, y_custom, 'g--', label='Custom exp', alpha=0.8)
             
             # Plot our custom sigmoid fit
             if sig_params is not None:
-                y_sigmoid = sigmoid_scaling(loss_smooth, *sig_params)
+                y_sigmoid = sigmoid_scaling(log_L_red_smooth, *sig_params)
                 ax.plot(loss_smooth, y_sigmoid, 'm:', label='Sigmoid', alpha=0.8, linewidth=2)
-
-            # Plot our log sigmoid fit
-            if log_sig_params is not None:
-                y_sigmoid = zero_to_one_sigmoid_scaling(log_loss_smooth, *log_sig_params)
-                log_ax.plot(log_loss_smooth, y_sigmoid, 'm:', label='Sigmoid', alpha=0.8, linewidth=2)
             
-            # Configure subplot
-            ax.set_xlabel('Loss')
+            # Configure subplot with log scale on x-axis
+            ax.set_xscale('log')
+            ax.set_xlabel('Loss (log scale)')
             ax.set_ylabel('Error')
             ax.set_title(f'{dataset}\nData range shown in vertical lines')
             ax.legend()
             ax.grid(True, alpha=0.3)
-
-            log_ax.set_xlabel('Negative Log Reducible Loss')
-            log_ax.set_ylabel('Accuracy')
-            log_ax.legend()
-            log_ax.grid(True, alpha=0.3)
             
             # Print parameters and ranges
             print(f"\nScaling laws for {dataset}:")
-            print(f"Loss range: [{loss_min:.4f}, {loss_max:.4f}]")
             print(f"Error range: [{min(error):.4f}, {max(error):.4f}]")
             print(f"Pre-fitted error exponential fit (a, b, e):               {', '.join([f'{x:.4f}' for x in error_params])}")
             print(f"Custom error exponential fit (a, b, e):        {', '.join([f'{x:.4f}' for x in exp_params]) if exp_params is not None else 'None'}")
             print(f"Custom error sigmoid fit (a, b, c, d):         {', '.join([f'{x:.4f}' for x in sig_params]) if sig_params is not None else 'None'}")
-            print(f"Log loss error sigmoid fit (b, c):         {', '.join([f'{x:.4f}' for x in log_sig_params]) if log_sig_params is not None else 'None'}")
             
         except Exception as e:
             print(f"Error analyzing scaling laws for {dataset} -> {downstream}: {str(e)}")
@@ -332,7 +281,7 @@ def main():
     cc_mults = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
     val_dataset = "c4_val"
     
-    for downstream in ["avg", "avg_subset", "avg_best_subset"]:
+    for downstream in ["avg", "avg_subset"]:
         analyze_all_scalings(
             datasets, val_dataset, downstream,
             model_dir, eval_dir, cc_mults, scaling_laws
