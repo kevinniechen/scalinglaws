@@ -13,12 +13,12 @@ def create_plots(layout='vertical'):
     modified_scenarios = []
     for scenario in optimized_scenarios:
         label = scenario[0]
-        if "GPT-5P" in label:
-            label = "GPT-5P (1M GPUs)"
-        elif "GPT-6P" in label:
-            label = "GPT-6P (10M GPUs)"
-        elif "GPT-7P" in label:
-            label = "GPT-7P (100M GPUs)"
+        # if "GPT-5P" in label:
+        #     label = "GPT-5P (1M GPUs)"
+        # elif "GPT-6P" in label:
+        #     label = "GPT-6P (10M GPUs)"
+        # elif "GPT-7P" in label:
+        #     label = "GPT-7P (100M GPUs)"
         modified_scenarios.append((label,) + scenario[1:])
 
     # Extract token (C) and flop (D) values from modified_scenarios

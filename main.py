@@ -71,9 +71,10 @@ scenarios = [
     ("GPT-3", 3.14e23, 3e11),
     ("GPT-4", 2e25, 1.3e13),
     # ("LLaMA-400B", 4e25, 1.5e13),
-    ("GPT-5P (1M or $10B GPUs)", 8e26, 1.5e13),
-    ("GPT-6P (10M or $100B GPUs)", 8e27, 1.5e14),
-    ("GPT-7P (100M or $1T GPUs)", 8e28, 1.5e15),
+    # the following is from IFP: https://ifp.org/future-of-ai-compute/
+    ("GPT-5P (IFP 2026; 150K GPUs)", 2e27, 1.5e13),
+    ("GPT-6P (IFP 2028; 700K GPUs)", 3e28, 1.5e14),
+    ("GPT-7P (IFP 2030; 4M GPUs)", 5e29, 1.5e15),
 ]
 
 optimized_scenarios = []
